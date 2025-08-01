@@ -1,0 +1,49 @@
+# Endpoint Finder Configuration Example
+
+# GitHub API configuration
+github:
+  # GitHub personal access token (optional)
+  # Used for accessing private repositories and avoiding rate limits
+  token: YOUR_GITHUB_TOKEN
+  
+  # GitHub username to scan repositories from (optional)
+  # user: username
+  
+  # GitHub organization to scan repositories from (optional)
+  # org: organization
+
+# Scanning configuration
+scan:
+  # Languages to scan for endpoints
+  # Comment out or remove languages you don't want to scan
+  languages:
+    - python    # Flask, Django, FastAPI
+    - javascript # Express.js
+    - java      # Spring Boot
+    # - php      # Laravel, Symfony (not implemented yet)
+    # - ruby     # Rails (not implemented yet)
+    # - go       # Gin, Echo (not implemented yet)
+  
+  # Directories to exclude from scanning
+  exclude_dirs:
+    - .git
+    - node_modules
+    - venv
+    - .venv
+    - __pycache__
+    - dist
+    - build
+    - .idea
+    - .vscode
+
+# Output configuration
+output:
+  # Output format: text, csv, or json
+  format: text
+  
+  # Output file (optional)
+  # If not specified, output will be printed to console
+  # file: results.json
+  
+  # Include detailed information about each endpoint (optional)
+  # detailed: true

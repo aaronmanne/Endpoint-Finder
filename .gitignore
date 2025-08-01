@@ -1,0 +1,10 @@
+/.venv/
+config.yaml
+.env.production
+auth.json
+/.fleet
+/.idea
+/.nova
+/.vscode
+/.zed
+
