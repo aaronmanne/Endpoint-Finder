@@ -13,6 +13,12 @@ from tqdm import tqdm
 from endpoint_finder.github import get_repositories
 from endpoint_finder.parsers import get_parser_for_language
 from endpoint_finder.output import generate_report
+from endpoint_finder.openapi import (
+    find_openapi_files, 
+    save_openapi_file, 
+    generate_openapi_spec, 
+    save_generated_openapi
+)
 
 # Configure logging
 logging.basicConfig(
@@ -59,7 +65,7 @@ def clone_repository(repo_url: str, token: Optional[str] = None) -> str:
 
 def scan_repository(repo_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Scan a repository for API endpoints.
+    Scan a repository for API endpoints and OpenAPI/Swagger documentation.
     
     Args:
         repo_path (str): Path to the repository.
@@ -74,12 +80,23 @@ def scan_repository(repo_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
     languages = config.get("scan", {}).get("languages", ["python", "javascript", "java"])
     exclude_dirs = config.get("scan", {}).get("exclude_dirs", [])
     
+    # Get OpenAPI configuration
+    openapi_config = config.get("openapi", {})
+    find_existing = openapi_config.get("find_existing", True)
+    generate_if_none = openapi_config.get("generate_if_none", True)
+    output_dir = openapi_config.get("output_dir", "openapi-docs")
+    output_format = openapi_config.get("output_format", "json")
+    
     # Initialize results
     results = {
         "repository": os.path.basename(repo_path),
         "endpoints": [],
         "endpoint_count": 0,
-        "languages": {}
+        "languages": {},
+        "openapi": {
+            "existing_files": [],
+            "generated_file": None
+        }
     }
     
     # Walk through the repository
@@ -90,7 +107,11 @@ def scan_repository(repo_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
         for file in files:
             file_path = os.path.join(root, file)
             rel_path = os.path.relpath(file_path, repo_path)
-            
+
+            # Skip files in common source library directories
+            if any(part in file_path.lower() for part in ['node_modules', 'vendor', 'third_party', 'lib', 'libs']):
+                continue
+
             # Determine file language based on extension
             file_ext = os.path.splitext(file)[1].lower()
             language = None
@@ -138,12 +159,60 @@ def scan_repository(repo_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
                     
                     results["languages"][language]["files_scanned"] += 1
                     results["languages"][language]["endpoints_found"] += len(file_endpoints)
-            
+            except IndexError as e:
+                logger.debug(f"IndexError parsing file {rel_path}: {e}")
             except Exception as e:
                 logger.error(f"Error parsing file {rel_path}: {e}")
     
     # Update endpoint count
     results["endpoint_count"] = len(results["endpoints"])
+    
+    # Find existing OpenAPI/Swagger documentation
+    if find_existing:
+        logger.info("Searching for existing OpenAPI/Swagger documentation")
+        openapi_files = find_openapi_files(repo_path)
+        
+        if openapi_files:
+            logger.info(f"Found {len(openapi_files)} OpenAPI/Swagger files")
+            results["openapi"]["existing_files"] = openapi_files
+            
+            # Save found OpenAPI files
+            saved_files = []
+            for openapi_file in openapi_files:
+                try:
+                    saved_path = save_openapi_file(openapi_file, output_dir)
+                    saved_files.append({
+                        "original": openapi_file["file"],
+                        "saved": saved_path
+                    })
+                except Exception as e:
+                    logger.error(f"Error saving OpenAPI file {openapi_file['file']}: {e}")
+            
+            results["openapi"]["saved_files"] = saved_files
+    
+    # Generate OpenAPI documentation if none exists and there are endpoints
+    if generate_if_none and not results["openapi"]["existing_files"] and results["endpoints"]:
+        logger.info("No existing OpenAPI documentation found, generating from endpoints")
+        try:
+            # Generate OpenAPI specification
+            spec = generate_openapi_spec(
+                results["endpoints"], 
+                results["repository"],
+                output_format
+            )
+            
+            # Save generated specification
+            saved_path = save_generated_openapi(
+                spec, 
+                output_dir, 
+                results["repository"],
+                output_format
+            )
+            
+            results["openapi"]["generated_file"] = saved_path
+            logger.info(f"Generated OpenAPI documentation saved to {saved_path}")
+        except Exception as e:
+            logger.error(f"Error generating OpenAPI documentation: {e}")
     
     return results
 

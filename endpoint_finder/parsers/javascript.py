@@ -4,6 +4,7 @@ JavaScript parser for detecting API endpoints in Express.js applications.
 
 import re
 import logging
+import traceback
 from typing import List, Dict, Any
 
 from endpoint_finder.parsers.base import BaseParser
@@ -29,7 +30,7 @@ class JavaScriptParser(BaseParser):
             List[Dict[str, Any]]: List of endpoints found in the file.
         """
         endpoints = []
-        
+        file_ext = file_path.split()[1].lower()
         # Try to use esprima if available for more accurate parsing
         try:
             import esprima
@@ -40,15 +41,16 @@ class JavaScriptParser(BaseParser):
             regex_endpoints = self._parse_with_regex(content, file_path)
             endpoints.extend(regex_endpoints)
         except Exception as e:
-            logger.warning(f"Error parsing {file_path} with esprima: {e}, falling back to regex parsing")
+            if file_ext in ['.ts', '.tsx']:
+                logger.debug(f"Error parsing {file_path} with esprima: {e}, falling back to regex parsing")
             regex_endpoints = self._parse_with_regex(content, file_path)
             endpoints.extend(regex_endpoints)
-        
+
         return endpoints
     
     def _parse_with_esprima(self, content: str, file_path: str) -> List[Dict[str, Any]]:
         """
-        Parse a JavaScript file for API endpoints using esprima.
+        Parse a JavaScript/TypeScript file for API endpoints using esprima.
         
         Args:
             content (str): Content of the file to parse.
@@ -60,8 +62,15 @@ class JavaScriptParser(BaseParser):
         import esprima
         
         endpoints = []
+        file_ext = file_path.split('.')[-1].lower()
         
-        # Parse the JavaScript code
+        # For TypeScript files, try to preprocess the content
+        if file_ext in ['ts', 'tsx']:
+            # Remove TypeScript type annotations that might cause parsing issues
+            # This is a simple approach - more complex TypeScript features might still cause issues
+            content = self._preprocess_typescript(content)
+        
+        # Parse the JavaScript/TypeScript code
         try:
             ast = esprima.parseScript(content, {'loc': True, 'comment': True})
         except:
@@ -69,7 +78,12 @@ class JavaScriptParser(BaseParser):
             try:
                 ast = esprima.parseModule(content, {'loc': True, 'comment': True})
             except Exception as e:
-                logger.warning(f"Error parsing {file_path} with esprima: {e}")
+                if file_ext in ['ts', 'tsx']:
+                    tb = traceback.extract_tb(e.__traceback__)
+                    last_frame = tb[-1]
+                    logger.debug(f"WARNING parsing {file_path} with esprima: {e} :: on line {last_frame.lineno} in {last_frame.filename}")
+                    # Fall back to regex parsing for TypeScript files
+                    logger.debug(f"Falling back to regex parsing for TypeScript file {file_path}")
                 return []
         
         # Find Express.js route definitions

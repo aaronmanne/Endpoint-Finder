@@ -6,6 +6,9 @@ A Python tool that scans GitHub repositories to identify API endpoints across va
 
 - **Repository Scanning**: Scan GitHub repositories by URL, username, or organization, or scan locally cloned repositories
 - **Endpoint Identification**: Detect API endpoints in multiple programming languages and frameworks
+- **OpenAPI/Swagger Support**:
+  - Find and save existing OpenAPI/Swagger documentation in repositories
+  - Generate OpenAPI/Swagger documentation from detected endpoints if none exists
 - **Reporting**: Generate reports in various formats (text, CSV, JSON)
 - **Language Support**:
   - **Tier 1** (Fully Implemented):
@@ -116,6 +119,28 @@ endpoint-finder scan --repo https://github.com/username/repo --output csv --outp
 endpoint-finder scan --repo https://github.com/username/repo --output json --output-file results.json
 ```
 
+#### OpenAPI/Swagger Options
+
+```bash
+# Find existing OpenAPI/Swagger documentation (enabled by default)
+endpoint-finder scan --repo https://github.com/username/repo --find-openapi
+
+# Disable finding existing OpenAPI/Swagger documentation
+endpoint-finder scan --repo https://github.com/username/repo --no-find-openapi
+
+# Generate OpenAPI documentation if none exists (enabled by default)
+endpoint-finder scan --repo https://github.com/username/repo --generate-openapi
+
+# Disable generating OpenAPI documentation
+endpoint-finder scan --repo https://github.com/username/repo --no-generate-openapi
+
+# Specify directory to save OpenAPI documentation
+endpoint-finder scan --repo https://github.com/username/repo --openapi-dir ./docs/openapi
+
+# Specify format for generated OpenAPI documentation (json or yaml)
+endpoint-finder scan --repo https://github.com/username/repo --openapi-format yaml
+```
+
 #### Authentication
 
 For private repositories or to avoid GitHub API rate limits:
@@ -197,6 +222,20 @@ scan:
     - venv
     - .venv
     - __pycache__
+
+# OpenAPI/Swagger configuration
+openapi:
+  # Find existing OpenAPI/Swagger documentation (default: true)
+  find_existing: true
+  
+  # Generate OpenAPI documentation if none exists (default: true)
+  generate_if_none: true
+  
+  # Directory to save OpenAPI documentation
+  output_dir: openapi-docs
+  
+  # Format for generated OpenAPI documentation: json or yaml
+  output_format: json
 
 # Output configuration
 output:

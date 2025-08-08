@@ -44,6 +44,39 @@ def parse_args():
         help="Languages to scan for (default: all supported languages)"
     )
     
+    # OpenAPI/Swagger options
+    openapi_group = scan_parser.add_argument_group("OpenAPI/Swagger Options")
+    openapi_group.add_argument(
+        "--find-openapi",
+        action="store_true",
+        help="Find existing OpenAPI/Swagger documentation (default: enabled)"
+    )
+    openapi_group.add_argument(
+        "--no-find-openapi",
+        action="store_true",
+        help="Disable finding existing OpenAPI/Swagger documentation"
+    )
+    openapi_group.add_argument(
+        "--generate-openapi",
+        action="store_true",
+        help="Generate OpenAPI documentation if none exists (default: enabled)"
+    )
+    openapi_group.add_argument(
+        "--no-generate-openapi",
+        action="store_true",
+        help="Disable generating OpenAPI documentation"
+    )
+    openapi_group.add_argument(
+        "--openapi-dir",
+        help="Directory to save OpenAPI documentation (default: openapi-docs)"
+    )
+    openapi_group.add_argument(
+        "--openapi-format",
+        choices=["json", "yaml"],
+        default="json",
+        help="Format for generated OpenAPI documentation (default: json)"
+    )
+    
     return parser.parse_args()
 
 
@@ -76,6 +109,27 @@ def main():
         if args.output_file:
             config["output"] = config.get("output", {})
             config["output"]["file"] = args.output_file
+            
+        # Process OpenAPI options
+        config["openapi"] = config.get("openapi", {})
+        
+        # Handle find_existing option
+        if args.find_openapi:
+            config["openapi"]["find_existing"] = True
+        elif args.no_find_openapi:
+            config["openapi"]["find_existing"] = False
+            
+        # Handle generate_if_none option
+        if args.generate_openapi:
+            config["openapi"]["generate_if_none"] = True
+        elif args.no_generate_openapi:
+            config["openapi"]["generate_if_none"] = False
+            
+        # Handle output directory and format
+        if args.openapi_dir:
+            config["openapi"]["output_dir"] = args.openapi_dir
+        if args.openapi_format:
+            config["openapi"]["output_format"] = args.openapi_format
         
         # Determine repositories to scan
         repositories = []
