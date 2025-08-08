@@ -148,6 +148,10 @@ def save_openapi_file(openapi_file: Dict[str, Any], output_dir: str) -> str:
     logger.info(f"Saved OpenAPI/Swagger file to {output_path}")
     return output_path
 
+def extract_path_parameters(path: str):
+    # Find all {param} in the path
+    return re.findall(r'\{([^}]+)\}', path)
+
 def generate_openapi_spec(endpoints: List[Dict[str, Any]], repo_name: str, output_format: str = "json") -> Dict[str, Any]:
     """
     Generate an OpenAPI specification from detected endpoints.
@@ -183,18 +187,44 @@ def generate_openapi_spec(endpoints: List[Dict[str, Any]], repo_name: str, outpu
     
     # Add paths and operations to the specification
     for path, path_endpoints in path_groups.items():
-        spec["paths"][path] = {}
+        # Clean up path format - remove any trailing quotes, produces annotations, or other metadata
+        # First, check if the path contains a produces annotation or other metadata
+        if '"' in path:
+            # Extract the actual path by taking everything before the first quote that's not part of a path parameter
+            parts = path.split('"')
+            if len(parts) > 1:
+                clean_path = parts[0]
+            else:
+                clean_path = path
+        else:
+            clean_path = path
+        
+        # Remove any trailing non-path characters
+        clean_path = re.sub(r'[,"\s]+$', '', clean_path).strip()
+        
+        # Log the path cleaning for debugging
+        logger.debug(f"Original path: {path}")
+        logger.debug(f"Cleaned path: {clean_path}")
+        
+        # Skip paths that couldn't be properly cleaned
+        if not clean_path or clean_path.endswith('"'):
+            logger.warning(f"Skipping path that couldn't be properly cleaned: {path}")
+            continue
+            
+        # Initialize the path in the spec if it doesn't exist
+        if clean_path not in spec["paths"]:
+            spec["paths"][clean_path] = {}
+        
+        # Extract path parameters from the URL pattern
+        path_params = extract_path_parameters(clean_path)
         
         for endpoint in path_endpoints:
             method = endpoint.get("method", "get").lower()
-            
-            # Skip if method is not a standard HTTP method
             if method not in ["get", "post", "put", "delete", "patch", "options", "head"]:
                 continue
-            
-            # Create operation object
+                
             operation = {
-                "summary": f"{method.upper()} {path}",
+                "summary": f"{method.upper()} {clean_path}",
                 "description": f"Source: {endpoint.get('file', 'Unknown')}",
                 "responses": {
                     "200": {
@@ -203,12 +233,46 @@ def generate_openapi_spec(endpoints: List[Dict[str, Any]], repo_name: str, outpu
                 }
             }
             
-            # Add parameters if available
-            if "parameters" in endpoint:
-                operation["parameters"] = endpoint["parameters"]
+            # Initialize parameters list
+            operation["parameters"] = []
             
-            # Add request body for methods that typically have one
-            if method in ["post", "put", "patch"] and "request_body" not in operation:
+            # Add path parameters from URL pattern
+            for param in path_params:
+                operation["parameters"].append({
+                    "name": param,
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "string"}
+                })
+                
+            # Add path parameters from annotations
+            for param in endpoint.get("path_params", []):
+                # Check if this parameter is already included from the URL pattern
+                if param not in path_params:
+                    operation["parameters"].append({
+                        "name": param,
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"}
+                    })
+            
+            # Add additional parameters if present in endpoint
+            if "parameters" in endpoint:
+                operation["parameters"].extend(endpoint["parameters"])
+
+            # Add query, header, and cookie parameters
+            for param_type, param_in in [("query_params", "query"), ("header_params", "header"),
+                                         ("cookie_params", "cookie")]:
+                for param in endpoint.get(param_type, []):
+                    operation["parameters"].append({
+                        "name": param,
+                        "in": param_in,
+                        "required": False,
+                        "schema": {"type": "string"}
+                    })
+
+            # Add request body for appropriate methods or if explicitly marked
+            if (method in ["post", "put", "patch"] and "request_body" not in operation) or endpoint.get("has_request_body", False):
                 operation["requestBody"] = {
                     "description": "Request body",
                     "content": {
@@ -219,9 +283,8 @@ def generate_openapi_spec(endpoints: List[Dict[str, Any]], repo_name: str, outpu
                         }
                     }
                 }
-            
-            spec["paths"][path][method] = operation
-    
+            # Use the cleaned path, not the original path
+            spec["paths"][clean_path][method] = operation
     return spec
 
 def save_generated_openapi(spec: Dict[str, Any], output_dir: str, repo_name: str, output_format: str = "json") -> str:

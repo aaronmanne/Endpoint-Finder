@@ -98,39 +98,98 @@ class JavaParser(BaseParser):
         Returns:
             List[Dict[str, Any]]: List of endpoints found in the method.
         """
+
         endpoints = []
-        
-        # Check for mapping annotations
         for annotation in method_node.annotations:
             mapping_info = self._extract_mapping_info(annotation)
-            
             if mapping_info:
                 path, methods = mapping_info
-                
-                # Combine class-level and method-level paths
                 if class_mapping:
                     if path.startswith('/'):
                         path = class_mapping + path
                     else:
                         path = class_mapping + '/' + path
-                
-                # Ensure path starts with /
                 if not path.startswith('/'):
                     path = '/' + path
-                
-                # Add an endpoint for each HTTP method
                 for method in methods:
-                    endpoints.append({
+                    endpoint = {
                         "path": path,
                         "method": method,
                         "framework": "Spring Boot",
                         "file": file_path,
                         "line": method_node.position.line if hasattr(method_node, 'position') else 0,
                         "function": method_node.name,
-                        "description": self._extract_javadoc(method_node) or ""
-                    })
-        
+                        "description": self._extract_javadoc(method_node) or "",
+                        "query_params": [],
+                        "header_params": [],
+                        "cookie_params": [],
+                        "path_params": [],
+                        "has_request_body": False
+                    }
+                    # --- Extract parameter annotations ---
+                    for param in getattr(method_node, "parameters", []):
+                        for param_ann in getattr(param, "annotations", []):
+                            # Extract parameter name from annotation value if available
+                            param_name = param.name  # Default to variable name
+                            
+                            # Check if annotation has elements (like value="something")
+                            if hasattr(param_ann, 'element') and param_ann.element:
+                                for pair in param_ann.element:
+                                    # Look for 'value' or unnamed element
+                                    if pair.name in ['value', None]:
+                                        extracted_name = self._extract_string_literal(pair.value)
+                                        if extracted_name and extracted_name != "/":
+                                            param_name = extracted_name
+                                            break
+                            
+                            if param_ann.name == "RequestParam":
+                                endpoint["query_params"].append(param_name)
+                            elif param_ann.name == "RequestHeader":
+                                # Special case for Authorization header
+                                if param_name.lower() == "authorization" or param.name.lower() == "authorization":
+                                    param_name = "Authorization"
+                                endpoint["header_params"].append(param_name)
+                            elif param_ann.name == "CookieValue":
+                                endpoint["cookie_params"].append(param_name)
+                            elif param_ann.name == "PathVariable":
+                                endpoint["path_params"].append(param_name)
+                            elif param_ann.name == "RequestBody":
+                                endpoint["has_request_body"] = True
+                    endpoints.append(endpoint)
         return endpoints
+        # endpoints = []
+        #
+        # # Check for mapping annotations
+        # for annotation in method_node.annotations:
+        #     mapping_info = self._extract_mapping_info(annotation)
+        #
+        #     if mapping_info:
+        #         path, methods = mapping_info
+        #
+        #         # Combine class-level and method-level paths
+        #         if class_mapping:
+        #             if path.startswith('/'):
+        #                 path = class_mapping + path
+        #             else:
+        #                 path = class_mapping + '/' + path
+        #
+        #         # Ensure path starts with /
+        #         if not path.startswith('/'):
+        #             path = '/' + path
+        #
+        #         # Add an endpoint for each HTTP method
+        #         for method in methods:
+        #             endpoints.append({
+        #                 "path": path,
+        #                 "method": method,
+        #                 "framework": "Spring Boot",
+        #                 "file": file_path,
+        #                 "line": method_node.position.line if hasattr(method_node, 'position') else 0,
+        #                 "function": method_node.name,
+        #                 "description": self._extract_javadoc(method_node) or ""
+        #             })
+        #
+        # return endpoints
     
     def _extract_mapping_info(self, annotation) -> tuple:
         """
@@ -334,15 +393,68 @@ class JavaParser(BaseParser):
                     if not path.startswith('/'):
                         path = '/' + path
                     
-                    endpoints.append({
+                    # Create endpoint with parameter lists
+                    endpoint = {
                         "path": path,
                         "method": method,
                         "framework": "Spring Boot",
                         "file": file_path,
                         "line": i + 1,
                         "function": "unknown",  # Can't reliably get method name with regex
-                        "description": ""
-                    })
+                        "description": "",
+                        "query_params": [],
+                        "header_params": [],
+                        "cookie_params": [],
+                        "path_params": [],
+                        "has_request_body": False
+                    }
+                    
+                    # Look for method parameters in the next few lines
+                    param_search_range = 10  # Look at up to 10 lines after the mapping
+                    for j in range(i + 1, min(i + param_search_range, len(lines))):
+                        param_line = lines[j]
+                        
+                        # Check for path parameters - find all matches in the line
+                        path_param_matches = re.finditer(r'@PathVariable\s*(?:\(\s*(?:value\s*=\s*)?["\']([^"\']+)["\'])?\s*\)?\s*(?:\w+\s+)?(\w+)', param_line)
+                        for path_param_match in path_param_matches:
+                            # Use annotation value if available, otherwise use variable name
+                            param_name = path_param_match.group(1) if path_param_match.group(1) else path_param_match.group(2)
+                            endpoint["path_params"].append(param_name)
+                        
+                        # Check for query parameters - find all matches in the line
+                        query_param_matches = re.finditer(r'@RequestParam\s*(?:\(\s*(?:value\s*=\s*)?["\']([^"\']+)["\'])?\s*\)?\s*(?:\w+\s+)?(\w+)', param_line)
+                        for query_param_match in query_param_matches:
+                            # Use annotation value if available, otherwise use variable name
+                            param_name = query_param_match.group(1) if query_param_match.group(1) else query_param_match.group(2)
+                            endpoint["query_params"].append(param_name)
+                        
+                        # Check for header parameters - find all matches in the line
+                        header_param_matches = re.finditer(r'@RequestHeader\s*(?:\(\s*(?:value\s*=\s*)?["\']([^"\']+)["\'])?\s*\)?\s*(?:\w+\s+)?(\w+)', param_line)
+                        for header_param_match in header_param_matches:
+                            # Use annotation value if available, otherwise use variable name
+                            param_name = header_param_match.group(1) if header_param_match.group(1) else header_param_match.group(2)
+                            # Special case for Authorization header
+                            if param_name and param_name.lower() == "authorization":
+                                param_name = "Authorization"
+                            endpoint["header_params"].append(param_name)
+                        
+                        # Check for cookie parameters - find all matches in the line
+                        cookie_param_matches = re.finditer(r'@CookieValue\s*(?:\(\s*(?:value\s*=\s*)?["\']([^"\']+)["\'])?\s*\)?\s*(?:\w+\s+)?(\w+)', param_line)
+                        for cookie_param_match in cookie_param_matches:
+                            # Use annotation value if available, otherwise use variable name
+                            param_name = cookie_param_match.group(1) if cookie_param_match.group(1) else cookie_param_match.group(2)
+                            endpoint["cookie_params"].append(param_name)
+                        
+                        # Check for request body
+                        request_body_match = re.search(r'@RequestBody', param_line)
+                        if request_body_match:
+                            endpoint["has_request_body"] = True
+                        
+                        # Stop searching if we hit a closing brace or another method
+                        if re.search(r'^\s*\}\s*$', param_line) or re.search(r'@\w+Mapping', param_line):
+                            break
+                    
+                    endpoints.append(endpoint)
         
         return endpoints
 
