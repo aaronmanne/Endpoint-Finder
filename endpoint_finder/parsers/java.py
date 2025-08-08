@@ -157,39 +157,6 @@ class JavaParser(BaseParser):
                                 endpoint["has_request_body"] = True
                     endpoints.append(endpoint)
         return endpoints
-        # endpoints = []
-        #
-        # # Check for mapping annotations
-        # for annotation in method_node.annotations:
-        #     mapping_info = self._extract_mapping_info(annotation)
-        #
-        #     if mapping_info:
-        #         path, methods = mapping_info
-        #
-        #         # Combine class-level and method-level paths
-        #         if class_mapping:
-        #             if path.startswith('/'):
-        #                 path = class_mapping + path
-        #             else:
-        #                 path = class_mapping + '/' + path
-        #
-        #         # Ensure path starts with /
-        #         if not path.startswith('/'):
-        #             path = '/' + path
-        #
-        #         # Add an endpoint for each HTTP method
-        #         for method in methods:
-        #             endpoints.append({
-        #                 "path": path,
-        #                 "method": method,
-        #                 "framework": "Spring Boot",
-        #                 "file": file_path,
-        #                 "line": method_node.position.line if hasattr(method_node, 'position') else 0,
-        #                 "function": method_node.name,
-        #                 "description": self._extract_javadoc(method_node) or ""
-        #             })
-        #
-        # return endpoints
     
     def _extract_mapping_info(self, annotation) -> tuple:
         """
