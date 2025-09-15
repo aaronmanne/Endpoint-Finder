@@ -8,4 +8,4 @@ auth.json
 /.vscode
 /.zed
 /openapi-docs/
-/ExampleCode/*
+/ExampleCode/

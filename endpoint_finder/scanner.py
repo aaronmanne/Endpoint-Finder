@@ -2,23 +2,23 @@
 Repository scanning functionality for Endpoint Finder.
 """
 
+import logging
 import os
 import tempfile
-import logging
 from typing import List, Dict, Any, Optional
 
 from git import Repo, GitCommandError
 from tqdm import tqdm
 
 from endpoint_finder.github import get_repositories
-from endpoint_finder.parsers import get_parser_for_language
-from endpoint_finder.output import generate_report
 from endpoint_finder.openapi import (
-    find_openapi_files, 
-    save_openapi_file, 
-    generate_openapi_spec, 
+    find_openapi_files,
+    save_openapi_file,
+    generate_openapi_spec,
     save_generated_openapi
 )
+from endpoint_finder.output import generate_report
+from endpoint_finder.parsers import get_parser_for_language
 
 # Configure logging
 logging.basicConfig(
@@ -77,7 +77,7 @@ def scan_repository(repo_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"Scanning repository at {repo_path}")
     
     # Get languages to scan
-    languages = config.get("scan", {}).get("languages", ["python", "javascript", "java"])
+    languages = config.get("scan", {}).get("languages", ["python", "javascript", "typescript", "java"])
     exclude_dirs = config.get("scan", {}).get("exclude_dirs", [])
     
     # Get OpenAPI configuration
@@ -118,8 +118,10 @@ def scan_repository(repo_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
             
             if file_ext in ['.py']:
                 language = 'python'
-            elif file_ext in ['.js', '.jsx', '.ts', '.tsx']:
+            elif file_ext in ['.js', '.jsx']:
                 language = 'javascript'
+            elif file_ext in ['.ts', '.tsx']:
+                language = 'typescript'
             elif file_ext in ['.java']:
                 language = 'java'
             elif file_ext in ['.php']:

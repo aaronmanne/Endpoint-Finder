@@ -2,8 +2,8 @@
 JavaScript parser for detecting API endpoints in Express.js applications.
 """
 
-import re
 import logging
+import re
 import traceback
 from typing import List, Dict, Any
 
@@ -30,22 +30,12 @@ class JavaScriptParser(BaseParser):
             List[Dict[str, Any]]: List of endpoints found in the file.
         """
         endpoints = []
-        file_ext = file_path.split()[1].lower()
-        # Try to use esprima if available for more accurate parsing
+        # Prefer regex-based parsing for robustness and simple mount composition
         try:
-            import esprima
-            ast_endpoints = self._parse_with_esprima(content, file_path)
-            endpoints.extend(ast_endpoints)
-        except ImportError:
-            logger.warning("esprima not available, falling back to regex parsing")
             regex_endpoints = self._parse_with_regex(content, file_path)
             endpoints.extend(regex_endpoints)
         except Exception as e:
-            if file_ext in ['.ts', '.tsx']:
-                logger.debug(f"Error parsing {file_path} with esprima: {e}, falling back to regex parsing")
-            regex_endpoints = self._parse_with_regex(content, file_path)
-            endpoints.extend(regex_endpoints)
-
+            logger.error(f"Regex parsing failed for {file_path}: {e}")
         return endpoints
     
     def _parse_with_esprima(self, content: str, file_path: str) -> List[Dict[str, Any]]:
@@ -91,7 +81,7 @@ class JavaScriptParser(BaseParser):
         
         return endpoints
     
-    def _find_express_routes(self, nodes, endpoints, file_path, router_var=None):
+    def _find_express_routes(self, nodes, endpoints, file_path, router_var=None, mounts=None):
         """
         Recursively find Express.js route definitions in the AST.
         
@@ -101,7 +91,9 @@ class JavaScriptParser(BaseParser):
             file_path: Path to the file being parsed.
             router_var: Name of the router variable, if known.
         """
-        import esprima
+
+        if mounts is None:
+            mounts = {}
         
         for node in nodes:
             # Look for app.METHOD() or router.METHOD() calls
@@ -112,13 +104,25 @@ class JavaScriptParser(BaseParser):
                 if call_expr.callee.type == 'MemberExpression':
                     obj = call_expr.callee.object
                     method = call_expr.callee.property.name.lower() if hasattr(call_expr.callee.property, 'name') else None
-                    
+
+                    # Detect router.use('/base', someRouter) mounts to build prefixes
+                    if method == 'use' and call_expr.arguments and len(call_expr.arguments) >= 2:
+                        base_arg = call_expr.arguments[0]
+                        router_arg = call_expr.arguments[1]
+                        if (
+                            getattr(base_arg, 'type', None) == 'Literal' and isinstance(getattr(base_arg, 'value', None), str)
+                            and base_arg.value.startswith('/')
+                        ):
+                            # If the second argument is an identifier, use its name
+                            if getattr(router_arg, 'type', None) == 'Identifier' and hasattr(router_arg, 'name'):
+                                mounts[router_arg.name] = base_arg.value
+
                     # Check if it's a route method (get, post, put, delete, etc.)
-                    if method in ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'all', 'use']:
+                    if method in ['get', 'post', 'put', 'delete', 'patch', 'options', 'head']:
                         # Check if it's called on app, router, or a known router variable
                         obj_name = obj.name if hasattr(obj, 'name') else None
                         
-                        if obj_name in ['app', 'router'] or obj_name == router_var:
+                        if obj_name in ['app', 'router'] or obj_name == router_var or obj_name in mounts:
                             # Extract the route path from the first argument
                             if call_expr.arguments and len(call_expr.arguments) > 0:
                                 path_arg = call_expr.arguments[0]
@@ -128,7 +132,17 @@ class JavaScriptParser(BaseParser):
                                 if path_arg.type == 'Literal' and isinstance(path_arg.value, str):
                                     path = path_arg.value
                                 
-                                if path is not None:
+                                if path is not None and isinstance(path, str) and path.startswith('/'):
+                                    # Apply mount prefix if applicable
+                                    if obj_name in mounts:
+                                        base = mounts[obj_name]
+                                        if path == '/':
+                                            path = base
+                                        else:
+                                            if base.endswith('/'):
+                                                path = base.rstrip('/') + path
+                                            else:
+                                                path = base + path
                                     # Add the endpoint
                                     endpoints.append({
                                         "path": path,
@@ -157,9 +171,9 @@ class JavaScriptParser(BaseParser):
             # Recursively search in block statements
             if hasattr(node, 'body'):
                 if isinstance(node.body, list):
-                    self._find_express_routes(node.body, endpoints, file_path, router_var)
+                    self._find_express_routes(node.body, endpoints, file_path, router_var, mounts)
                 elif hasattr(node.body, 'body') and isinstance(node.body.body, list):
-                    self._find_express_routes(node.body.body, endpoints, file_path, router_var)
+                    self._find_express_routes(node.body.body, endpoints, file_path, router_var, mounts)
     
     def _extract_comment(self, node):
         """
@@ -194,13 +208,37 @@ class JavaScriptParser(BaseParser):
         # Express.js route patterns
         # app.METHOD(path, ...handlers)
         # router.METHOD(path, ...handlers)
-        express_route_pattern = r'(?:app|router|[A-Za-z_$][A-Za-z0-9_$]*)\.(get|post|put|delete|patch|options|head|all|use)\s*\(\s*[\'"]([^\'"]+)[\'"]'
+        # Capture the object name so we can apply mount prefixes if any
+        express_route_pattern = r'([A-Za-z_$][A-Za-z0-9_$]*)\.(get|post|put|delete|patch|options|head)\s*\(\s*[\'\"](\/[^\'\"]*)[\'\"]'
+        mount_use_pattern = r'[A-Za-z_$][A-Za-z0-9_$]*\.use\s*\(\s*[\'\"](\/[^\'\"]*)[\'\"]\s*,\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)'
+
+        # Build a list of mounted router variables to their base paths with line numbers
+        mounts_list = []  # list of tuples: (var, base, line_no)
+        for idx, line in enumerate(lines):
+            m = re.search(mount_use_pattern, line)
+            if m:
+                base = m.group(1)
+                var = m.group(2)
+                mounts_list.append((var, base, idx + 1))
         
         # Find Express.js routes
         for i, line in enumerate(lines):
             for match in re.finditer(express_route_pattern, line):
-                method = match.group(1).upper()
-                path = match.group(2)
+                obj = match.group(1)
+                method = match.group(2).upper()
+                path = match.group(3)
+
+                # Apply mount prefix if the object is a mounted router and the mount occurs before this line
+                applicable_bases = [b for (v, b, ln) in mounts_list if v == obj and ln < (i + 1)]
+                base = applicable_bases[-1] if applicable_bases else None
+                if base:
+                    if path == '/':
+                        path = base
+                    elif path.startswith('/'):
+                        if base.endswith('/'):
+                            path = base.rstrip('/') + path
+                        else:
+                            path = base + path
                 
                 endpoints.append({
                     "path": path,
@@ -211,5 +249,39 @@ class JavaScriptParser(BaseParser):
                     "function": "anonymous",
                     "description": ""
                 })
+        
+        # Detect frontend-style API wrappers like apiRequest({...})
+        api_call_regex = re.compile(r"apiRequest\s*\(\s*\{(?P<body>.*?)\}\s*\)", re.DOTALL)
+        for m in api_call_regex.finditer(content):
+            body = m.group('body')
+            api_match = re.search(r"\bapi\s*:\s*['\"]([^'\"]+)['\"]", body)
+            path_match = re.search(r"\brequestPath\s*:\s*['\"]([^'\"]+)['\"]", body)
+            method_match = re.search(r"\bconfig\s*:\s*\{[^}]*?\bmethod\s*:\s*['\"]([^'\"]+)['\"]", body, re.DOTALL)
+
+            api_seg = api_match.group(1) if api_match else ''
+            req_path = path_match.group(1) if path_match else ''
+            method = (method_match.group(1) if method_match else 'get').upper()
+
+            def norm(seg: str) -> str:
+                return seg.strip('/')
+            parts = []
+            if api_seg:
+                parts.append(norm(api_seg))
+            if req_path:
+                parts.append(norm(req_path))
+            path = '/' + '/'.join([p for p in parts if p]) if parts else '/'
+
+            start_idx = m.start()
+            line_no = content.count('\n', 0, start_idx) + 1
+
+            endpoints.append({
+                "path": path,
+                "method": method,
+                "framework": "apiRequest",
+                "file": file_path,
+                "line": line_no,
+                "function": "apiRequest",
+                "description": ""
+            })
         
         return endpoints
