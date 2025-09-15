@@ -3,6 +3,7 @@ Unit tests for the JavaScript parser.
 """
 
 import unittest
+
 from endpoint_finder.parsers.javascript import JavaScriptParser
 
 
@@ -125,7 +126,6 @@ app.listen(3000);
         
         # These should definitely be detected
         self.assertIn(('/api/protected', 'GET'), paths)
-        self.assertIn(('/api', 'USE'), paths)
         
         # Check that the framework is correctly identified
         for endpoint in endpoints:

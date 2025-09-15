@@ -6,9 +6,10 @@ import logging
 from typing import Dict, Optional
 
 from endpoint_finder.parsers.base import BaseParser
-from endpoint_finder.parsers.python import PythonParser
-from endpoint_finder.parsers.javascript import JavaScriptParser
 from endpoint_finder.parsers.java import JavaParser
+from endpoint_finder.parsers.javascript import JavaScriptParser
+from endpoint_finder.parsers.python import PythonParser
+from endpoint_finder.parsers.typescript import TypeScriptParser
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ _PARSERS: Dict[str, BaseParser] = {
     "python": PythonParser(),
     "javascript": JavaScriptParser(),
     "java": JavaParser(),
+    "typescript": TypeScriptParser(),
 }
 
 

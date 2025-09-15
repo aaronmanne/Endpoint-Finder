@@ -2,9 +2,10 @@
 Java parser for detecting API endpoints in Spring Boot applications.
 """
 
-import re
 import logging
+import re
 from typing import List, Dict, Any
+
 import javalang
 from javalang import tree
 
@@ -103,14 +104,9 @@ class JavaParser(BaseParser):
         for annotation in method_node.annotations:
             mapping_info = self._extract_mapping_info(annotation)
             if mapping_info:
-                path, methods = mapping_info
-                if class_mapping:
-                    if path.startswith('/'):
-                        path = class_mapping + path
-                    else:
-                        path = class_mapping + '/' + path
-                if not path.startswith('/'):
-                    path = '/' + path
+                method_path, methods = mapping_info
+                # Combine class-level and method-level paths robustly
+                path = self._combine_paths(class_mapping or '/', method_path or '/')
                 for method in methods:
                     endpoint = {
                         "path": path,
@@ -164,10 +160,10 @@ class JavaParser(BaseParser):
         """
         # Check if it's a mapping annotation
         if annotation.name in ['RequestMapping', 'GetMapping', 'PostMapping', 'PutMapping', 
-                              'DeleteMapping', 'PatchMapping']:
+                             'DeleteMapping', 'PatchMapping']:
             
             # Default values
-            path = "/"
+            path = "/"  # method-level path; '/' means use base only
             methods = []
             
             # Set methods based on annotation type
@@ -215,10 +211,11 @@ class JavaParser(BaseParser):
 
                         if not methods:  # Fallback to GET if no valid methods found
                             methods = ['GET']
+            
+            # Always return computed mapping info for mapping annotations
+            return path, methods
 
-                    return path, methods
-
-            return None
+        return None
     
     def _extract_mapping_path(self, annotation) -> str:
         """
@@ -312,14 +309,18 @@ class JavaParser(BaseParser):
         controller_pattern = r'@(?:RestController|Controller)'
         class_mapping_pattern = r'@RequestMapping\s*\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\)'
         
-        # Method mapping patterns
+        # Method mapping patterns (support optional value and method)
         method_mapping_patterns = {
-            r'@GetMapping\s*\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\)': 'GET',
-            r'@PostMapping\s*\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\)': 'POST',
-            r'@PutMapping\s*\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\)': 'PUT',
-            r'@DeleteMapping\s*\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\)': 'DELETE',
-            r'@PatchMapping\s*\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\)': 'PATCH',
-            r'@RequestMapping\s*\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*(?:,\s*method\s*=\s*(?:RequestMethod\.)?([A-Z]+))?': None
+            # Specialized mappings with optional value
+            r'@GetMapping\s*(?:\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\))?': 'GET',
+            r'@PostMapping\s*(?:\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\))?': 'POST',
+            r'@PutMapping\s*(?:\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\))?': 'PUT',
+            r'@DeleteMapping\s*(?:\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\))?': 'DELETE',
+            r'@PatchMapping\s*(?:\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*\))?': 'PATCH',
+            # RequestMapping with value and optional method
+            r'@RequestMapping\s*\(\s*(?:value\s*=\s*|\s*)["\'](.*?)["\']\s*(?:,\s*method\s*=\s*(?:RequestMethod\.)?([A-Z]+))?': None,
+            # RequestMapping with only method
+            r'@RequestMapping\s*\(\s*method\s*=\s*(?:RequestMethod\.)?([A-Z]+)\s*\)': 'REQUEST_ONLY_METHOD'
         }
         
         # First pass: check if this is a controller and get class-level mapping
@@ -341,28 +342,30 @@ class JavaParser(BaseParser):
         for i, line in enumerate(lines):
             for pattern, default_method in method_mapping_patterns.items():
                 for match in re.finditer(pattern, line):
-                    path = match.group(1)
-                    
-                    # For RequestMapping, try to get the method
-                    if default_method is None:
+                    path = None
+                    method = None
+
+                    if default_method == 'REQUEST_ONLY_METHOD':
+                        # Only method specified, no path at method level
+                        method = match.group(1)
+                        path = '/'
+                    elif default_method is None:
+                        # RequestMapping with optional method and value
+                        path = match.group(1) if len(match.groups()) >= 1 else '/'
                         method = match.group(2) if len(match.groups()) > 1 and match.group(2) else 'GET'
                     else:
+                        # Specialized mappings with optional value
                         method = default_method
-                    
-                    # Combine class-level and method-level paths
-                    if class_mapping:
-                        if path.startswith('/'):
-                            path = class_mapping + path
-                        else:
-                            path = class_mapping + '/' + path
-                    
-                    # Ensure path starts with /
-                    if not path.startswith('/'):
-                        path = '/' + path
+                        path = match.group(1) if len(match.groups()) >= 1 else '/'
+                        if not path:
+                            path = '/'
+
+                    # Combine class-level and method-level paths robustly
+                    combined_path = self._combine_paths(class_mapping or '/', path or '/')
                     
                     # Create endpoint with parameter lists
                     endpoint = {
-                        "path": path,
+                        "path": combined_path,
                         "method": method,
                         "framework": "Spring Boot",
                         "file": file_path,
