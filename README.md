@@ -22,20 +22,7 @@ A Python tool that scans GitHub repositories to identify API endpoints across va
 
 ## Installation
 
-### Option 1: Install from PyPI (Recommended)
-
-```bash
-# Install the base package
-pip install endpoint-finder
-
-# Install with optional parser dependencies for better accuracy
-pip install endpoint-finder[parsers]
-
-# Install with development dependencies (for contributing)
-pip install endpoint-finder[dev]
-```
-
-### Option 2: Install from Source
+### Install from Source
 
 1. Clone this repository:
    ```bash
